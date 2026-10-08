@@ -178,6 +178,7 @@ typedef struct {
   uint32_t param_count;
   uint32_t first_ctor;
   uint32_t ctor_count;
+  uint64_t universe; /* the largest universe of a constructor field */
 } FamilyInfo;
 
 typedef struct {
@@ -233,7 +234,7 @@ int conv_values(Machine *m, uint32_t level, const Value *a, const Value *b);
 const Core *quote_value(Machine *m, uint32_t level, const Value *v);
 /* Writes V in the surface syntax. NAMES gives the names of the levels below
    NAME_COUNT. */
-void value_print(Machine *m, const char *const *names, uint32_t name_count, const Value *v, char *buf, size_t cap);
+int value_print(Machine *m, const char *const *names, uint32_t name_count, const Value *v, char *buf, size_t cap);
 const char *op_name(const Machine *m, Op op, uint32_t inst, uint32_t field);
 
 #endif

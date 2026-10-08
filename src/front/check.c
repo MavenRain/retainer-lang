@@ -11,7 +11,7 @@
 #define SPINE_MAX 64u
 #define SHOW_MAX 512u
 #define NAMES_MAX 64u
-#define UNIVERSE_MAX 64u
+#define UNIVERSE_MAX 2u
 #define PRINT_MAX 65536u
 #define NO_FAMILY UINT32_MAX
 #define NO_DEF UINT32_MAX
@@ -317,14 +317,12 @@ static void pop(Checker *c) {
   c->level--;
 }
 
-/* 1 when a term of type FOUND can stand where WANT is expected. A universe
-   is in each larger universe. */
+/* 1 when a term of type FOUND can stand where WANT is expected.
+   Universes are not cumulative (former F14). */
 static int expect(Checker *c, const Value *found, const Value *want) {
   if (found == NULL || want == NULL)
     return 0;
   if (conv_values(c->m, c->level, found, want))
-    return 1;
-  if (found->kind == VAL_UNIV && want->kind == VAL_UNIV && found->nat <= want->nat)
     return 1;
   return FAIL(c, "TYPE_MISMATCH", "expected a term of type %s, found a term of type %s", show(c, want), show(c, found));
 }
@@ -435,6 +433,10 @@ static const Core *fn_into(Checker *c, const Term *t, const Value *dom, const Va
   if (ft == NULL || ft->kind != VAL_PI)
     return nul(FAIL(c, "TYPE_NOT_FUNCTION", "expected a function, found a term of type %s", show(c, ft)));
   *result = closure_apply(c->m, ft, val_var(c->m, c->level));
+  /* Check dependence before the result leaves its binder. */
+  if (!conv_values(c->m, c->level + 2u, *result,
+                   closure_apply(c->m, ft, val_var(c->m, c->level + 1u))))
+    return nul(FAIL(c, "TYPE_MISMATCH", "this operation needs a function with a non-dependent result type"));
   return expect(c, ft, val_arrow(c->m, dom, *result)) ? f : NULL;
 }
 
@@ -505,7 +507,7 @@ static const Core *rule_eq(Call *k) {
   const Value *tv = here(c, t);
   const Core *a = check(c, k->args[1], tv);
   const Core *b = a == NULL ? NULL : check(c, k->args[2], tv);
-  k->type = val_univ(c->m, 0);
+  k->type = val_univ(c->m, level);
   return op3(c, OP_EQ, 0, 3, t, a, b);
 }
 
@@ -977,7 +979,7 @@ static const Core *family_app(Call *k, uint32_t fam) {
     return nul(FAIL(c, "OOM", "out of memory"));
   if (!check_params(c, f, k->args, cores, vals))
     return NULL;
-  k->type = val_univ(c->m, 0);
+  k->type = val_univ(c->m, f->universe);
   return core_op(c, OP_FAMILY, fam, 0, cores, f->param_count);
 }
 
@@ -1366,6 +1368,8 @@ static int check_field(Checker *c, uint32_t fam, const Field *field, FieldInfo *
   t = check_type(c, field->type, &level);
   if (t == NULL)
     return 0;
+  if (level > c->m->families[fam].universe)
+    c->m->families[fam].universe = level;
   whole = t->kind == CORE_OP && t->op == OP_FAMILY && t->inst == fam && c->m->families[fam].param_count == 0u;
   out->name = field->name;
   out->type = t;
@@ -1635,7 +1639,10 @@ int eval_command(Machine *m, const char *name, char *const *args, int arg_count,
     buf = arena_alloc(m->arena, PRINT_MAX);
     if (buf == NULL)
       return diag_fail(m->diag, "OOM", name, "out of memory") + 1;
-    value_print(m, NULL, 0, v, buf, PRINT_MAX);
+    if (!value_print(m, NULL, 0, v, buf, PRINT_MAX)) {
+      diag_fail(m->diag, "EVAL_PRINT", name, "the normal form exceeds the printer limits");
+      return 1;
+    }
     fprintf(out, "%s\n", buf);
     return 0;
   }

@@ -49,4 +49,14 @@ def mapped : Sum Nat Flag := bind right (fun x => inr flagYes)
 EOF
 test "$(build/langc eval "$tmp/sum.lang" output)" = 'inl 7'
 test "$(build/langc eval "$tmp/sum.lang" mapped)" = 'inr flagYes'
+# A truncated normal form must not be reported as successful evaluation.
+printf 'def value : List Nat := fold (fun xs => cons 0 xs) nil 10000\n' >"$tmp/large.lang"
+status=0
+build/langc eval "$tmp/large.lang" value >"$tmp/got" 2>"$tmp/err" || status=$?
+test "$status" = 1
+test ! -s "$tmp/got"
+case "$(cat "$tmp/err")" in
+  'langc: EVAL_PRINT:'*) ;;
+  *) exit 1 ;;
+esac
 echo 'review regressions: passed'

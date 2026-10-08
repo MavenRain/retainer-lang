@@ -1024,6 +1024,14 @@ static int same_head(const Value *a, const Value *b) {
   return a->op == b->op && a->inst == b->inst && a->field == b->field && a->argc == b->argc;
 }
 
+/* Product and Sigma eta compare a pair with the projections of a neutral. */
+static int conv_pair(Machine *m, uint32_t level, const Value *pair, const Value *neutral) {
+  Op first = pair->op == OP_PAIR ? OP_FIRST : OP_WITNESS;
+  Op second = pair->op == OP_PAIR ? OP_SECOND : OP_PAYLOAD;
+  return conv_values(m, level, pair->args[0], make(m, VAL_STUCK, first, 0, 1, neutral, NULL, NULL))
+      && conv_values(m, level, pair->args[1], make(m, VAL_STUCK, second, 0, 1, neutral, NULL, NULL));
+}
+
 /* The last argument of an operation is compared in the loop, so a long
    list does not nest. */
 static int conv_loop(Machine *m, uint32_t level, const Value *a, const Value *b) {
@@ -1031,6 +1039,10 @@ static int conv_loop(Machine *m, uint32_t level, const Value *a, const Value *b)
   while (a != NULL && b != NULL && spend(m, 1)) {
     if (a->kind == VAL_LAM || b->kind == VAL_LAM)
       return conv_fun(m, level, a, b);
+    if ((val_is(a, OP_PAIR) || val_is(a, OP_PACK)) && scrut_of(b) == SCRUT_NEUTRAL)
+      return conv_pair(m, level, a, b);
+    if ((val_is(b, OP_PAIR) || val_is(b, OP_PACK)) && scrut_of(a) == SCRUT_NEUTRAL)
+      return conv_pair(m, level, b, a);
     if (a->kind != b->kind)
       return 0;
     switch (a->kind) {
@@ -1404,6 +1416,7 @@ static void print_value(Printer *p, const Value *v, int atom) {
   uint32_t i;
   if (p->depth >= PRINT_DEPTH_MAX) {
     put(p, "...");
+    p->full = 1;
     return;
   }
   p->depth++;
@@ -1427,13 +1440,13 @@ static void print_value(Printer *p, const Value *v, int atom) {
   p->depth--;
 }
 
-void value_print(Machine *m, const char *const *names, uint32_t name_count, const Value *v, char *buf, size_t cap) {
+int value_print(Machine *m, const char *const *names, uint32_t name_count, const Value *v, char *buf, size_t cap) {
   Printer p;
   if (cap == 0)
-    return;
+    return 0;
   buf[0] = '\0';
   if (cap < 4u)
-    return;
+    return 0;
   memset(&p, 0, sizeof p);
   p.m = m;
   p.buf = buf;
@@ -1441,4 +1454,5 @@ void value_print(Machine *m, const char *const *names, uint32_t name_count, cons
   p.names = names;
   p.name_count = name_count;
   print_value(&p, v, 0);
+  return !p.full && !m->diag->set;
 }
