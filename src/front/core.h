@@ -2,8 +2,8 @@
 
    The checker (front/check.c) writes core terms. Evaluation is normalization
    by evaluation: each value is a normal form. A neutral value (VAL_VAR,
-   VAL_APP, VAL_STUCK) is stuck on a variable. A trap (a Nat overflow) is a
-   value too. It goes up through each strict position (a Nat operation, the
+   VAL_APP, VAL_STUCK) is stuck on a variable. A trap (an overflow or a division by 0) is a
+   value too. It goes up through each strict position (an arithmetic operation, the
    scrutinee of an eliminator, the function of an application) and nowhere
    else. So the evaluator and the residual program agree: a trap that no
    strict position reads does not stop the program. */
@@ -20,6 +20,8 @@
 typedef enum {
   OP_NAT,
   OP_FLAG,
+  OP_U256,
+  OP_ADDR,
   OP_UNIT,
   OP_PROD,
   OP_SUM,
@@ -64,6 +66,15 @@ typedef enum {
   OP_NAT_EQ,
   OP_NAT_LE,
   OP_FLAG_IF,
+  OP_U256_ADD,
+  OP_U256_SUB,
+  OP_U256_MUL,
+  OP_U256_DIV,
+  OP_U256_LE,
+  OP_U256_EQ,
+  OP_U256_MIN,
+  OP_TO_U256,
+  OP_ADDR_EQ,
   OP_PROJ
 } Op;
 
@@ -78,7 +89,8 @@ typedef enum {
   CORE_VAR,    /* index: de Bruijn index */
   CORE_GLOBAL, /* index: definition number */
   CORE_NAT,    /* nat */
-  CORE_TRAP,   /* an overflow; only quote writes it */
+  CORE_WORD,   /* word; nat is WORD_U256 or WORD_ADDR */
+  CORE_TRAP,   /* an overflow or a division by 0; only quote writes it */
   CORE_UNIV,   /* Type nat */
   CORE_LAM,    /* fun name => b */
   CORE_PI,     /* (name : a) -> b */
@@ -92,6 +104,7 @@ struct Core {
   CoreKind kind;
   uint32_t index;
   uint64_t nat;
+  const U256 *word; /* WORD: the limbs */
   Op op;
   /* OP_FAMILY, OP_FOLD_FAMILY: the family. OP_CTOR, OP_PROJ: the
      constructor. OP_PURE, OP_MAP, OP_BIND, OP_FILTER: the Carrier. */
@@ -106,6 +119,7 @@ struct Core {
 
 typedef enum {
   VAL_NAT,
+  VAL_WORD, /* nat is WORD_U256 or WORD_ADDR */
   VAL_TRAP,
   VAL_UNIV,
   VAL_LAM,
@@ -128,7 +142,8 @@ struct Env {
 
 struct Value {
   ValKind kind;
-  uint64_t nat; /* NAT: the number. UNIV: the level. VAR: the level. */
+  uint64_t nat; /* NAT: the number. WORD: the sort. UNIV: the level. VAR: the level. */
+  const U256 *word; /* WORD: the limbs */
   Op op;        /* OP, STUCK */
   uint32_t inst;
   uint32_t field;
@@ -195,6 +210,7 @@ typedef struct {
 /* Each function returns NULL (or 0) after a diagnostic. A NULL input gives a
    NULL result, so a caller can test once at the end. */
 const Value *val_nat(Machine *m, uint64_t n);
+const Value *val_word(Machine *m, uint64_t sort, const U256 *word);
 const Value *val_var(Machine *m, uint32_t level);
 const Value *val_univ(Machine *m, uint64_t level);
 const Value *val_op(Machine *m, ValKind kind, Op op, uint32_t inst, uint32_t field, const Value *const *args, uint32_t argc);

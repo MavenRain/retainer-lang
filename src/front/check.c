@@ -67,6 +67,9 @@ typedef enum {
   RULE_CONG,
   RULE_TRANSPORT,
   RULE_NAT2,
+  RULE_U256_2,
+  RULE_ADDR2,
+  RULE_TO_U256,
   RULE_FLAG_IF
 } Rule;
 
@@ -75,13 +78,15 @@ typedef struct {
   uint32_t arity; /* fold: the least number of arguments */
   Rule rule;
   Op op;
-  Op result;     /* VALUE0, NAT2: the result type. EMPTY, INJ: the type former. */
+  Op result;     /* VALUE0, NAT2, U256_2, ADDR2, TO_U256: the result type. EMPTY, INJ: the type former. */
   uint32_t part; /* INJ, PART, SIGMA_PART: 0 or 1 */
 } Builtin;
 
 static const Builtin BUILTINS[] = {
   {"Nat", 0, RULE_TYPE0, OP_NAT, OP_NAT, 0},
   {"Flag", 0, RULE_TYPE0, OP_FLAG, OP_NAT, 0},
+  {"U256", 0, RULE_TYPE0, OP_U256, OP_NAT, 0},
+  {"Addr", 0, RULE_TYPE0, OP_ADDR, OP_NAT, 0},
   {"Unit", 0, RULE_TYPE0, OP_UNIT, OP_NAT, 0},
   {"Prod", 2, RULE_TYPE2, OP_PROD, OP_NAT, 0},
   {"Sum", 2, RULE_TYPE2, OP_SUM, OP_NAT, 0},
@@ -121,6 +126,15 @@ static const Builtin BUILTINS[] = {
   {"natMul", 2, RULE_NAT2, OP_NAT_MUL, OP_NAT, 0},
   {"natEq", 2, RULE_NAT2, OP_NAT_EQ, OP_FLAG, 0},
   {"natLe", 2, RULE_NAT2, OP_NAT_LE, OP_FLAG, 0},
+  {"u256Add", 2, RULE_U256_2, OP_U256_ADD, OP_U256, 0},
+  {"u256Sub", 2, RULE_U256_2, OP_U256_SUB, OP_U256, 0},
+  {"u256Mul", 2, RULE_U256_2, OP_U256_MUL, OP_U256, 0},
+  {"u256Div", 2, RULE_U256_2, OP_U256_DIV, OP_U256, 0},
+  {"u256Le", 2, RULE_U256_2, OP_U256_LE, OP_FLAG, 0},
+  {"u256Eq", 2, RULE_U256_2, OP_U256_EQ, OP_FLAG, 0},
+  {"u256Min", 2, RULE_U256_2, OP_U256_MIN, OP_U256, 0},
+  {"toU256", 1, RULE_TO_U256, OP_TO_U256, OP_U256, 0},
+  {"addrEq", 2, RULE_ADDR2, OP_ADDR_EQ, OP_FLAG, 0},
   {"flagIf", 3, RULE_FLAG_IF, OP_FLAG_IF, OP_FLAG, 0}
 };
 
@@ -182,6 +196,15 @@ static const Core *core_leaf(Checker *c, CoreKind kind, uint64_t nat) {
   Core *k = new_core(c, kind);
   if (k != NULL)
     k->nat = nat;
+  return k;
+}
+
+static const Core *core_word(Checker *c, uint64_t sort, const U256 *word) {
+  Core *k = new_core(c, CORE_WORD);
+  if (k != NULL) {
+    k->nat = sort;
+    k->word = word;
+  }
   return k;
 }
 
@@ -842,12 +865,15 @@ static const Core *rule_transport(Call *k) {
   return op3(c, OP_TRANSPORT, 0, 3, p, e, u);
 }
 
-static const Core *rule_nat2(Call *k) {
+/* natAdd, u256Add, addrEq, toU256 and the like: each argument has the type
+   former ARG. */
+static const Core *rule_prim(Call *k, Op arg) {
   Checker *c = k->c;
-  const Core *x = check(c, k->args[0], nat_type(c));
-  const Core *y = x == NULL ? NULL : check(c, k->args[1], nat_type(c));
+  const Value *t = tyop(c, arg, 0, NULL, NULL, NULL);
+  const Core *x = check(c, k->args[0], t);
+  const Core *y = x == NULL || k->b->arity < 2u ? NULL : check(c, k->args[1], t);
   k->type = tyop(c, k->b->result, 0, NULL, NULL, NULL);
-  return op3(c, k->b->op, 0, 2, x, y, NULL);
+  return k->b->arity < 2u ? op3(c, k->b->op, 0, 1, x, NULL, NULL) : op3(c, k->b->op, 0, 2, x, y, NULL);
 }
 
 /* flagIf b yes no */
@@ -918,7 +944,12 @@ static const Core *rule(Call *k) {
   case RULE_TRANSPORT:
     return rule_transport(k);
   case RULE_NAT2:
-    return rule_nat2(k);
+  case RULE_TO_U256:
+    return rule_prim(k, OP_NAT);
+  case RULE_U256_2:
+    return rule_prim(k, OP_U256);
+  case RULE_ADDR2:
+    return rule_prim(k, OP_ADDR);
   case RULE_FLAG_IF:
     return rule_flag_if(k);
   }
@@ -1259,6 +1290,9 @@ static const Core *elab_inner(Checker *c, const Term *t, const Value *hint, cons
   case TERM_NAT:
     *type = nat_type(c);
     return finish(c, core_leaf(c, CORE_NAT, t->nat), hint, type);
+  case TERM_WORD:
+    *type = tyop(c, t->nat == WORD_ADDR ? OP_ADDR : OP_U256, 0, NULL, NULL, NULL);
+    return finish(c, core_word(c, t->nat, t->word), hint, type);
   case TERM_LAM:
     return hint != NULL ? check_lam(c, t, hint, type) : infer_lam(c, t, type);
   case TERM_PI:
@@ -1508,7 +1542,7 @@ static int print_result(Machine *m, const char *name, const Value *v, FILE *out,
     return 0;
   case VAL_TRAP:
     fputs("trap\n", out);
-    fprintf(err, "langc: EVAL_OVERFLOW: %s: a Nat operation overflowed past 2^64-1\n", name);
+    fprintf(err, "langc: EVAL_OVERFLOW: %s: an operation trapped: a Nat or U256 overflow, or a U256 division by 0\n", name);
     return 0;
   case VAL_OP:
     if (val_is(v, OP_FLAG_YES) || val_is(v, OP_FLAG_NO)) {
@@ -1516,6 +1550,7 @@ static int print_result(Machine *m, const char *name, const Value *v, FILE *out,
       return 0;
     }
     break;
+  case VAL_WORD:
   case VAL_UNIV:
   case VAL_LAM:
   case VAL_PI:

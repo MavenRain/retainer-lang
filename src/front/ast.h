@@ -5,9 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "front/u256.h"
+
 typedef enum {
   TERM_VAR,   /* name */
   TERM_NAT,   /* nat */
+  TERM_WORD,  /* word; nat is WORD_U256 or WORD_ADDR */
   TERM_APP,   /* left applied to right */
   TERM_LAM,   /* fun (name : left) => right; left is NULL for a bare binder */
   TERM_PI,    /* (name : left) -> right; name is NULL for left -> right */
@@ -22,6 +25,7 @@ struct Term {
   int col;
   const char *name;
   uint64_t nat;
+  const U256 *word; /* WORD: the limbs */
   const Term *left;
   const Term *right;
 };

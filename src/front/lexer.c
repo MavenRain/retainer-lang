@@ -32,6 +32,7 @@ const char *tok_kind_name(TokKind kind) {
     case TOK_EOF: return "end of input";
     case TOK_IDENT: return "a name";
     case TOK_NAT: return "a Nat literal";
+    case TOK_WORD: return "a U256 or Addr literal";
     case TOK_LPAREN: return "'('";
     case TOK_RPAREN: return "')'";
     case TOK_COLON: return "':'";
@@ -83,6 +84,7 @@ static Token *push(Lexer *lx, TokKind kind, size_t start, int line, int col) {
   tok->text = lx->text + start;
   tok->len = lx->pos - start;
   tok->nat = 0;
+  tok->word = (U256){{0, 0, 0, 0}};
   tok->line = line;
   tok->col = col;
   return tok;
@@ -119,17 +121,70 @@ static int lex_ident(Lexer *lx) {
   return 1;
 }
 
+static int hex_value(char c) {
+  return is_digit(c) ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* The U256 suffix: a `u` that no name character follows. */
+static int at_suffix(const Lexer *lx) {
+  return peek(lx, 0) == 'u' && !is_ident_char(peek(lx, 1));
+}
+
+static int push_word(Lexer *lx, uint64_t sort, U256 value, size_t start, int line, int col) {
+  Token *tok = push(lx, TOK_WORD, start, line, col);
+  tok->nat = sort;
+  tok->word = value;
+  return 1;
+}
+
+/* 0x, 1 to 64 hex digits and u is a U256. 0x and exactly 40 hex digits is an
+   Addr. */
+static int lex_hex(Lexer *lx) {
+  size_t start = lx->pos;
+  int line = lx->line;
+  int col = lx->col;
+  U256 value = {{0, 0, 0, 0}};
+  size_t digits = 0;
+  int suffix;
+  advance(lx, 2);
+  while (hex_value(peek(lx, 0)) >= 0) {
+    u256_scale_add(&value, 16u, (uint32_t)hex_value(peek(lx, 0)));
+    digits++;
+    advance(lx, 1);
+  }
+  suffix = at_suffix(lx);
+  advance(lx, suffix ? 1u : 0u);
+  if (is_ident_char(peek(lx, 0))) {
+    return diag_fail(lx->diag, "LEX_CHAR", NULL, "%s:%d:%d: a letter follows a hex literal", lx->source, lx->line, lx->col);
+  }
+  if (suffix ? digits == 0 || digits > 64 : digits != 40) {
+    return diag_fail(lx->diag, "LEX_HEX", NULL, "%s:%d:%d: a hex literal is 0x, 1 to 64 hex digits and u (a U256), or 0x and 40 hex digits (an Addr); found %u hex digits", lx->source, line, col, (unsigned)digits);
+  }
+  return push_word(lx, suffix ? WORD_U256 : WORD_ADDR, value, start, line, col);
+}
+
 static int lex_nat(Lexer *lx) {
   size_t start = lx->pos;
   int line = lx->line;
   int col = lx->col;
   uint64_t value = 0;
+  U256 wide = {{0, 0, 0, 0}};
   int overflow = 0;
+  int wide_overflow = 0;
+  if (peek(lx, 0) == '0' && peek(lx, 1) == 'x') return lex_hex(lx);
   while (is_digit(peek(lx, 0))) {
     uint64_t digit = (uint64_t)(peek(lx, 0) - '0');
     overflow |= value > (UINT64_MAX - digit) / 10u;
     value = value * 10u + digit;
+    wide_overflow |= !u256_scale_add(&wide, 10u, (uint32_t)digit);
     advance(lx, 1);
+  }
+  if (at_suffix(lx)) {
+    advance(lx, 1);
+    if (wide_overflow) {
+      return diag_fail(lx->diag, "LEX_U256_RANGE", NULL, "%s:%d:%d: a U256 literal is larger than 2^256 - 1", lx->source, line, col);
+    }
+    return push_word(lx, WORD_U256, wide, start, line, col);
   }
   if (overflow) {
     return diag_fail(lx->diag, "LEX_NAT_RANGE", NULL, "%s:%d:%d: a Nat literal is larger than 2^64 - 1", lx->source, line, col);

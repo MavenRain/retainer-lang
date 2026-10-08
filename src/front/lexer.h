@@ -3,11 +3,13 @@
 #define LANG_FRONT_LEXER_H
 
 #include "front/base.h"
+#include "front/u256.h"
 
 typedef enum {
   TOK_EOF,
   TOK_IDENT,
   TOK_NAT,
+  TOK_WORD, /* a U256 or Addr literal; nat is WORD_U256 or WORD_ADDR */
   TOK_LPAREN,
   TOK_RPAREN,
   TOK_COLON,
@@ -30,6 +32,7 @@ typedef struct {
   const char *text;
   size_t len;
   uint64_t nat;
+  U256 word; /* WORD: the limbs */
   int line;
   int col;
 } Token;

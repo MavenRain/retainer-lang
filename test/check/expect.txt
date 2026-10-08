@@ -19,3 +19,7 @@ arity.lang TYPE_ARITY
 not-function.lang TYPE_NOT_FUNCTION
 bind-sum-error.lang TYPE_MISMATCH
 bind-sum-error-infer.lang TYPE_MISMATCH
+u256-addr.lang TYPE_MISMATCH
+nat-addr.lang TYPE_MISMATCH
+nat-u256.lang TYPE_MISMATCH
+u256-law.lang TYPE_REFL

@@ -9,7 +9,7 @@
 #define VARIES 0xffu
 
 static const char *const OP_NAMES[] = {
-  [OP_NAT] = "Nat", [OP_FLAG] = "Flag", [OP_UNIT] = "Unit", [OP_PROD] = "Prod",
+  [OP_NAT] = "Nat", [OP_FLAG] = "Flag", [OP_U256] = "U256", [OP_ADDR] = "Addr", [OP_UNIT] = "Unit", [OP_PROD] = "Prod",
   [OP_SUM] = "Sum", [OP_OPTION] = "Option", [OP_LIST] = "List", [OP_EQ] = "Eq",
   [OP_FAMILY] = "?", [OP_UNIT_VAL] = "unit", [OP_FLAG_YES] = "flagYes",
   [OP_FLAG_NO] = "flagNo", [OP_PAIR] = "pair", [OP_INL] = "inl", [OP_INR] = "inr",
@@ -22,13 +22,16 @@ static const char *const OP_NAMES[] = {
   [OP_SYMM] = "symm", [OP_TRANS] = "trans", [OP_TRANSPORT] = "transport",
   [OP_CONG] = "cong", [OP_NAT_ADD] = "natAdd", [OP_NAT_SUB] = "natSub",
   [OP_NAT_MUL] = "natMul", [OP_NAT_EQ] = "natEq", [OP_NAT_LE] = "natLe",
-  [OP_FLAG_IF] = "flagIf", [OP_PROJ] = "?"
+  [OP_FLAG_IF] = "flagIf", [OP_U256_ADD] = "u256Add", [OP_U256_SUB] = "u256Sub",
+  [OP_U256_MUL] = "u256Mul", [OP_U256_DIV] = "u256Div", [OP_U256_LE] = "u256Le",
+  [OP_U256_EQ] = "u256Eq", [OP_U256_MIN] = "u256Min", [OP_TO_U256] = "toU256",
+  [OP_ADDR_EQ] = "addrEq", [OP_PROJ] = "?"
 };
 
 /* The number of arguments of each operation. VARIES: it comes from the
    family tables. */
 static const unsigned char OP_ARITY[] = {
-  [OP_NAT] = 0, [OP_FLAG] = 0, [OP_UNIT] = 0, [OP_PROD] = 2, [OP_SUM] = 2,
+  [OP_NAT] = 0, [OP_FLAG] = 0, [OP_U256] = 0, [OP_ADDR] = 0, [OP_UNIT] = 0, [OP_PROD] = 2, [OP_SUM] = 2,
   [OP_OPTION] = 1, [OP_LIST] = 1, [OP_EQ] = 3, [OP_FAMILY] = VARIES,
   [OP_UNIT_VAL] = 0, [OP_FLAG_YES] = 0, [OP_FLAG_NO] = 0, [OP_PAIR] = 2,
   [OP_INL] = 1, [OP_INR] = 1, [OP_NONE] = 0, [OP_SOME] = 1, [OP_NIL] = 0,
@@ -38,7 +41,10 @@ static const unsigned char OP_ARITY[] = {
   [OP_FOLD_FAMILY] = VARIES, [OP_UNFOLD] = 3, [OP_FILTER] = 2, [OP_WITNESS] = 1,
   [OP_PAYLOAD] = 1, [OP_SYMM] = 1, [OP_TRANS] = 2, [OP_TRANSPORT] = 3,
   [OP_CONG] = 2, [OP_NAT_ADD] = 2, [OP_NAT_SUB] = 2, [OP_NAT_MUL] = 2,
-  [OP_NAT_EQ] = 2, [OP_NAT_LE] = 2, [OP_FLAG_IF] = 3, [OP_PROJ] = 1
+  [OP_NAT_EQ] = 2, [OP_NAT_LE] = 2, [OP_FLAG_IF] = 3, [OP_U256_ADD] = 2,
+  [OP_U256_SUB] = 2, [OP_U256_MUL] = 2, [OP_U256_DIV] = 2, [OP_U256_LE] = 2,
+  [OP_U256_EQ] = 2, [OP_U256_MIN] = 2, [OP_TO_U256] = 1, [OP_ADDR_EQ] = 2,
+  [OP_PROJ] = 1
 };
 
 typedef enum {
@@ -101,6 +107,15 @@ const Value *val_nat(Machine *m, uint64_t n) {
   Value *v = new_value(m, VAL_NAT);
   if (v != NULL)
     v->nat = n;
+  return v;
+}
+
+const Value *val_word(Machine *m, uint64_t sort, const U256 *word) {
+  Value *v = new_value(m, VAL_WORD);
+  if (v != NULL) {
+    v->nat = sort;
+    v->word = word;
+  }
   return v;
 }
 
@@ -242,6 +257,7 @@ static Scrut scrut_of(const Value *v) {
   case VAL_STUCK:
     return SCRUT_NEUTRAL;
   case VAL_NAT:
+  case VAL_WORD:
   case VAL_UNIV:
   case VAL_LAM:
   case VAL_PI:
@@ -353,6 +369,7 @@ const Value *apply_value(Machine *m, const Value *fn, const Value *arg) {
     v->arg = arg;
     return v;
   case VAL_NAT:
+  case VAL_WORD:
   case VAL_UNIV:
   case VAL_PI:
   case VAL_SIGMA:
@@ -733,6 +750,65 @@ static const Value *nat_mul(Machine *m, const Value *const *a, uint32_t n) {
   return y != 0 && x > UINT64_MAX / y ? overflow(m) : val_nat(m, x * y);
 }
 
+/* 1 when each argument is a value of the kind WANT. Else *OUT is the trap or
+   the stuck operation. */
+static int word_args(Machine *m, Op op, ValKind want, const Value *const *a, uint32_t n, const Value **out) {
+  uint32_t i;
+  for (i = 0; i < n; i++) {
+    if (a[i]->kind == VAL_TRAP) {
+      *out = a[i];
+      return 0;
+    }
+  }
+  for (i = 0; i < n; i++) {
+    if (blocked(m, a[i], op, 0, 0, a, n, out))
+      return 0;
+  }
+  for (i = 0; i < n; i++) {
+    if (a[i]->kind != want) {
+      *out = internal(m, "a word operation on a value of another kind");
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static const Value *word_value(Machine *m, const U256 *x) {
+  U256 *w = arena_alloc(m->arena, sizeof *w);
+  if (w == NULL)
+    return oom(m);
+  *w = *x;
+  return val_word(m, WORD_U256, w);
+}
+
+/* u256Add and u256Mul trap on an overflow, u256Div traps on 0. */
+static const Value *u256_arith(Machine *m, Op op, const Value *const *a, uint32_t n, int (*fn)(U256 *, const U256 *, const U256 *)) {
+  const Value *out;
+  U256 r;
+  if (!word_args(m, op, VAL_WORD, a, n, &out))
+    return out;
+  return fn(&r, a[0]->word, a[1]->word) ? word_value(m, &r) : overflow(m);
+}
+
+/* u256Le, u256Eq and addrEq. */
+static const Value *word_test(Machine *m, Op op, const Value *const *a, uint32_t n) {
+  const Value *out;
+  int order;
+  if (!word_args(m, op, VAL_WORD, a, n, &out))
+    return out;
+  order = u256_cmp(a[0]->word, a[1]->word);
+  return flag(m, op == OP_U256_LE ? order <= 0 : order == 0);
+}
+
+static const Value *to_u256(Machine *m, const Value *const *a, uint32_t n) {
+  const Value *out;
+  U256 r;
+  if (!word_args(m, OP_TO_U256, VAL_NAT, a, n, &out))
+    return out;
+  u256_from_u64(&r, a[0]->nat);
+  return word_value(m, &r);
+}
+
 static const Value *nat_test(Machine *m, Op op, const Value *const *a, uint32_t n) {
   const Value *out;
   uint64_t x = 0;
@@ -791,6 +867,8 @@ static const Value *reduce_op(Machine *m, Op op, uint32_t inst, uint32_t field, 
   switch (op) {
   case OP_NAT:
   case OP_FLAG:
+  case OP_U256:
+  case OP_ADDR:
   case OP_UNIT:
   case OP_PROD:
   case OP_SUM:
@@ -857,6 +935,22 @@ static const Value *reduce_op(Machine *m, Op op, uint32_t inst, uint32_t field, 
   case OP_NAT_EQ:
   case OP_NAT_LE:
     return nat_test(m, op, a, n);
+  case OP_U256_ADD:
+    return u256_arith(m, op, a, n, u256_add);
+  case OP_U256_SUB:
+    return u256_arith(m, op, a, n, u256_sub);
+  case OP_U256_MUL:
+    return u256_arith(m, op, a, n, u256_mul);
+  case OP_U256_DIV:
+    return u256_arith(m, op, a, n, u256_div);
+  case OP_U256_MIN:
+    return u256_arith(m, op, a, n, u256_min);
+  case OP_U256_LE:
+  case OP_U256_EQ:
+  case OP_ADDR_EQ:
+    return word_test(m, op, a, n);
+  case OP_TO_U256:
+    return to_u256(m, a, n);
   case OP_FLAG_IF:
     return reduce_flag_if(m, a, n);
   case OP_PROJ:
@@ -886,6 +980,8 @@ static const Value *eval_inner(Machine *m, const Env *env, const Core *c) {
     return def_value(m, c->index);
   case CORE_NAT:
     return val_nat(m, c->nat);
+  case CORE_WORD:
+    return val_word(m, c->nat, c->word);
   case CORE_TRAP:
     return val_trap(m);
   case CORE_UNIV:
@@ -938,6 +1034,8 @@ static int conv_loop(Machine *m, uint32_t level, const Value *a, const Value *b)
     if (a->kind != b->kind)
       return 0;
     switch (a->kind) {
+    case VAL_WORD:
+      return a->nat == b->nat && u256_cmp(a->word, b->word) == 0;
     case VAL_NAT:
     case VAL_UNIV:
     case VAL_VAR:
@@ -995,6 +1093,15 @@ static const Core *core_leaf(Machine *m, CoreKind kind, uint64_t nat) {
   Core *c = new_core(m, kind);
   if (c != NULL)
     c->nat = nat;
+  return c;
+}
+
+static const Core *core_word(Machine *m, const Value *v) {
+  Core *c = new_core(m, CORE_WORD);
+  if (c != NULL) {
+    c->nat = v->nat;
+    c->word = v->word;
+  }
   return c;
 }
 
@@ -1067,6 +1174,8 @@ static const Core *quote_inner(Machine *m, uint32_t level, const Value *v) {
   switch (v->kind) {
   case VAL_NAT:
     return core_leaf(m, CORE_NAT, v->nat);
+  case VAL_WORD:
+    return core_word(m, v);
   case VAL_TRAP:
     return core_leaf(m, CORE_TRAP, 0);
   case VAL_UNIV:
@@ -1211,6 +1320,7 @@ static void print_binder(Printer *p, const Value *v) {
     put(p, ") ");
     break;
   case VAL_NAT:
+  case VAL_WORD:
   case VAL_TRAP:
   case VAL_UNIV:
   case VAL_OP:
@@ -1227,7 +1337,7 @@ static void print_binder(Printer *p, const Value *v) {
 }
 
 static void print_other(Printer *p, const Value *v, int atom) {
-  char num[32];
+  char num[96];
   if (v == NULL) {
     put(p, "?");
     return;
@@ -1235,6 +1345,10 @@ static void print_other(Printer *p, const Value *v, int atom) {
   switch (v->kind) {
   case VAL_NAT:
     snprintf(num, sizeof num, "%llu", (unsigned long long)v->nat);
+    put(p, num);
+    return;
+  case VAL_WORD:
+    word_text(v->nat, v->word, num, sizeof num);
     put(p, num);
     return;
   case VAL_TRAP:
@@ -1272,6 +1386,7 @@ static void print_other(Printer *p, const Value *v, int atom) {
     print_binder(p, v);
     break;
   case VAL_NAT:
+  case VAL_WORD:
   case VAL_TRAP:
   case VAL_VAR:
   case VAL_OP:
