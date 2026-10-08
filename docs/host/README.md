@@ -17,7 +17,8 @@ The TinyCC host kit of retainer-lang. It compiles the contract language to EVM b
 | K2 | U256 and Addr core types | Done |
 | K3a | Contract types: State, Env, Out, entries and views | Done |
 | K3b | `langc run` and call scripts | Done |
-| K3c to K5 | See the retainer-lang brief | Planned |
+| K3c | History rule: REFUSE_HISTORY_WRITE | Done |
+| K4 to K5 | See the retainer-lang brief | Planned |
 
 
 ## U256 and Addr (slice K2)
@@ -53,7 +54,7 @@ The helpers are in `src/front/u256.c`. They use no `__int128` and no shift by 64
 
 ## Contracts (slice K3)
 
-Slice K3a adds the contract types to the checker and the evaluator. Slice K3b adds `langc run` and call scripts. Slice K3c adds the history rule. K3c is planned.
+Slice K3a adds the contract types to the checker and the evaluator. Slice K3b adds `langc run` and call scripts. Slice K3c adds the history rule to `langc check`.
 
 The contract prelude is in `src/front/contract.c`. The front end loads it after `domain/domain.lang` and before the program. Its names are core names, thus a program cannot declare them again.
 
@@ -91,9 +92,20 @@ The type of a definition gives its role. There is no keyword for a role.
 - All other definitions are helpers.
 - `def init : State := TERM` gives the start state. The name `init` is fixed.
 
-`langc check` and `langc eval` do not find the role of a definition. For them, `init` is a normal definition. `langc run` finds the roles and the start state (slice K3b).
+`langc check` and `langc eval` do not find the role of a definition. For them, `init` is a normal definition, but the history rule of `langc check` (slice K3c) does not check the body of `init` and refuses a reference to `init` from a definition with `State` in its type. `langc run` finds the roles and the start state (slice K3b).
 
 `examples/contract.lang` has the state, `init`, the entries `deposit`, `withdraw` and `stamp`, the helper `checkpoint` and the view `balance`. `langc eval` prints a state in the constructor form, for example `makeState 0x00000000000000000000000000000000000000aa 0u 0u 0`. `langc abi` and `langc build` still stop with `langc: PLANNED: ...`.
+
+The history rule (slice K3c) makes sure that a call cannot make a history field less than before. For a state with at least one history field, `langc check` checks the rule on the core term of each definition, after it resolves the names. It does not check the body of `init` or of a definition with the type `State` after normalization, for example `initial` in `examples/state-aliases.lang`. States without history fields do not need this rule.
+
+- Each use of the state constructor has all of its arguments.
+- The argument for a history field `F` is `F t` or `ADD (F t) e`. `ADD` is `u256Add` for a `U256` field and `natAdd` for a `Nat` field. `t` and `e` can be any terms of the correct type.
+- A definition with `State` in its type cannot refer to `init` or to a definition with the type `State`, because a return of one of them can put a history field back to its start value. A definition without `State` in its type can refer to them, for example `savedEarned` in `examples/state-aliases.lang`.
+- An open type variable is conservatively treated as possibly containing `State`. For example, `Sigma (A : Type 0) A` can package a state even though its written type does not name `State`, so it cannot hide a reference to `init` or another unchecked state definition.
+- The rule is strict. It refuses a literal (`0u`), a subtraction (`u256Sub (earned s) 1u`), the operands in the other order (`u256Add 1u (earned s)`), the constructor without all of its arguments (`makeState` alone), and a history value that goes through a `fun` binder. A binder with the name of a field, for example `fun (earned : U256) => ...`, is a local and not the field. A view with `State` in its type that refers to `init` or to a definition with the type `State` is also refused.
+- If a definition does not obey the rule, the checker gives `REFUSE_HISTORY_WRITE`.
+
+Why the rule is sound: each state in an entry comes from the input state, or from a constructor that keeps or adds to each history field of a state. A definition without `State` in its type cannot give a state to an entry, because a program cannot declare a family that holds a state (rule R1). Thus each history field of the result is not less than the same field of the input. `u256Add` and `natAdd` trap on overflow, so a value cannot wrap. The test files are `test/check/history-*.lang`.
 
 `langc run PROG SCRIPT` checks the program `PROG`, gets the start state from `init`, and then does the calls in `SCRIPT` in sequence. Each line of a script is one call:
 
