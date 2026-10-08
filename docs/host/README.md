@@ -15,7 +15,8 @@ The TinyCC host kit of retainer-lang. It compiles the contract language to EVM b
 |-------|---------|--------|
 | K1 | Kit skeleton, assembler, keccak, ABI selectors, tool probe | Done |
 | K2 | U256 and Addr core types | Done |
-| K3 to K5 | See the retainer-lang brief | Planned |
+| K3a | Contract types: State, Env, Out, entries and views | Done |
+| K3b to K5 | See the retainer-lang brief | Planned |
 
 
 ## U256 and Addr (slice K2)
@@ -48,6 +49,50 @@ Prelude names:
 | `addrEq` | `Addr -> Addr -> Flag` | `flagYes` when the two addresses are equal. |
 
 The helpers are in `src/front/u256.c`. They use no `__int128` and no shift by 64 or more. `examples/words.lang` has the laws and the eval cases. The EVM output for these types is planned for slice K4: `langc build` still stops with `langc: PLANNED: ...`.
+
+## Contracts (slice K3)
+
+Slice K3a adds the contract types to the checker and the evaluator. Slice K3b adds `langc run` and call scripts. Slice K3c adds the history rule. K3b and K3c are planned.
+
+The contract prelude is in `src/front/contract.c`. The front end loads it after `domain/domain.lang` and before the program. Its names are core names, thus a program cannot declare them again.
+
+```
+family Env := makeEnv (now : Nat) (caller : Addr)
+family Out := pay (payToken : Addr) (payTo : Addr) (payAmount : U256)
+  | pull (pullToken : Addr) (pullFrom : Addr) (pullTo : Addr) (pullAmount : U256)
+  | emit (emitTag : Nat) (emitFields : List U256)
+```
+
+- `Env` gives the time of the call (`now`) and the address of the caller (`caller`).
+- `Out` is one effect of an entry. `pay` sends tokens to an address. `pull` moves tokens from an address. `emit` writes an event.
+- The emit tag is an event index. Slice K4 maps it to a log topic.
+
+The state form:
+
+```
+state State := makeState (owner : Addr) (held : U256) history (earned : U256) (cursor : Nat)
+```
+
+- `state` is a keyword. A program can declare one state only.
+- The state type must have the name `State`, no parameters and one constructor.
+- Each field type must be first order: `Nat`, `Flag`, `U256`, `Addr`, or `Option`, `Prod` or `List` of first-order types. A field cannot have the type `State`, a function type or a `Type`.
+- Field types are checked after normalization, so type aliases are allowed, including inside containers and in history fields.
+- The word `history` marks each field of the next `(...)` group as a history field. A history field must have the type `Nat` or `U256`.
+- `history` is not a reserved word. It has this function only in the field list of a state.
+- Each field name is a projection, as in a family. For example, `held s` is the `held` field of the state `s`.
+- If a state does not obey these rules, the checker gives `REFUSE_STATE`. A `family` in a program is still `REFUSE_DATA`.
+
+The type of a definition gives its role. There is no keyword for a role.
+
+- An entry has the type `(env : Env) -> (s : State) -> (a1 : T1) -> ... -> Option (Prod State (List Out))`. Each `Ti` is `Nat`, `Flag`, `U256` or `Addr`. An entry can have zero arguments.
+- An entry gives `none` to revert. It gives `some (pair s2 outs)` for the new state `s2` and the effects `outs`, in order.
+- A view has the same parameters as an entry. Its result type is `Nat`, `Flag`, `U256` or `Addr`.
+- All other definitions are helpers.
+- `def init : State := TERM` gives the start state. The name `init` is fixed.
+
+In slice K3a, the checker does not find the role of a definition, and `init` is a normal definition. Slice K3b finds the roles and the start state for `langc run`.
+
+`examples/contract.lang` has the state, `init`, the entries `deposit`, `withdraw` and `stamp`, the helper `checkpoint` and the view `balance`. `langc eval` prints a state in the constructor form, for example `makeState 0x00000000000000000000000000000000000000aa 0u 0u 0`. `langc abi` and `langc build` still stop with `langc: PLANNED: ...`.
 
 ## Commands
 

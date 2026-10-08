@@ -36,6 +36,7 @@ typedef struct {
   const Term *type;
   int line;
   int col;
+  int history; /* after the history marker of the state form (slice K3a) */
 } Field;
 
 typedef struct {
@@ -62,6 +63,7 @@ typedef struct {
   DeclKind kind;
   Origin origin;
   int is_rec;
+  int is_state; /* the state form, a family with the keyword state (slice K3a) */
   int line;
   int col;
   const char *name;

@@ -1370,6 +1370,7 @@ static int check_field(Checker *c, uint32_t fam, const Field *field, FieldInfo *
   out->name = field->name;
   out->type = t;
   out->recursive = c->self_uses > 0u;
+  out->history = field->history;
   if (out->recursive && !whole)
     return FAIL(c, "DOMAIN_FAMILY", "the recursive field %s must have the type %s itself, in a family with no parameters", field->name, c->m->families[fam].name);
   return 1;
@@ -1448,7 +1449,55 @@ static int check_def(Checker *c, const Decl *d) {
   return 1;
 }
 
+/* First order (slice K3a): Nat, Flag, U256, Addr, and Option, Prod and List
+   of first-order types, after normalization. */
+static int first_order(const Value *t) {
+  uint32_t i;
+  if (t == NULL || t->kind != VAL_OP)
+    return 0;
+  if (t->op == OP_NAT || t->op == OP_FLAG || t->op == OP_U256 || t->op == OP_ADDR)
+    return 1;
+  if (t->op != OP_OPTION && t->op != OP_PROD && t->op != OP_LIST)
+    return 0;
+  for (i = 0; i < t->argc; i++) {
+    if (!first_order(t->args[i]))
+      return 0;
+  }
+  return 1;
+}
+
+/* The state form (slice K3a): one `state State` with no parameters, one
+   constructor and first-order fields. A history field is a Nat or a U256. */
+static int check_state(Checker *c, const Decl *d) {
+  Machine *m = c->m;
+  const CtorInfo *ci;
+  uint32_t j;
+  if (m->has_state)
+    return FAIL(c, "REFUSE_STATE", "a program can declare one state only");
+  if (strcmp(d->name, "State") != 0)
+    return FAIL(c, "REFUSE_STATE", "the state type must have the name State, found %s", d->name);
+  if (d->param_count != 0u || d->ctor_count != 1u)
+    return FAIL(c, "REFUSE_STATE", "the state must have no parameters and one constructor");
+  if (!name_free(c, d->name) || !check_family(c, d))
+    return 0;
+  ci = &m->ctors[m->families[m->family_count - 1u].first_ctor];
+  for (j = 0; j < ci->field_count; j++) {
+    const Value *t = here(c, ci->fields[j].type);
+    if (t == NULL)
+      return 0;
+    if (!first_order(t))
+      return FAIL(c, "REFUSE_STATE", "the state field %s must have a first-order type: Nat, Flag, U256, Addr, or Option, Prod or List of them", ci->fields[j].name);
+    if (ci->fields[j].history && t->op != OP_NAT && t->op != OP_U256)
+      return FAIL(c, "REFUSE_STATE", "the history field %s must have the type Nat or U256", ci->fields[j].name);
+  }
+  m->has_state = 1;
+  m->state_family = m->family_count - 1u;
+  return 1;
+}
+
 static int check_decl(Checker *c, const Decl *d) {
+  if (d->is_state)
+    return check_state(c, d);
   if (d->kind == DECL_FAMILY && d->origin == ORIGIN_PROGRAM)
     return FAIL(c, "REFUSE_DATA", "a program cannot declare a family (rule R1); only domain/domain.lang can");
   if (d->kind == DECL_AXIOM)

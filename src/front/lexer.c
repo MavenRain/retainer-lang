@@ -25,6 +25,7 @@ static const struct {
   {"axiom", TOK_KW_AXIOM},
   {"Type", TOK_KW_TYPE},
   {"Sigma", TOK_KW_SIGMA},
+  {"state", TOK_KW_STATE},
 };
 
 const char *tok_kind_name(TokKind kind) {
@@ -48,6 +49,7 @@ const char *tok_kind_name(TokKind kind) {
     case TOK_KW_AXIOM: return "'axiom'";
     case TOK_KW_TYPE: return "'Type'";
     case TOK_KW_SIGMA: return "'Sigma'";
+    case TOK_KW_STATE: return "'state'";
   }
   return "a token";
 }

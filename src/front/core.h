@@ -160,6 +160,7 @@ typedef struct {
   const char *name;
   const Core *type; /* in the context of the family parameters */
   int recursive;    /* the field type is the family itself */
+  int history;      /* a history field of the state (slice K3a) */
 } FieldInfo;
 
 typedef struct {
@@ -205,6 +206,8 @@ typedef struct {
   unsigned depth;
   uint64_t fuel;
   int overflowed;
+  int has_state;          /* the program declares the state (slice K3a) */
+  uint32_t state_family; /* the state family, when has_state is 1 */
 } Machine;
 
 /* Each function returns NULL (or 0) after a diagnostic. A NULL input gives a

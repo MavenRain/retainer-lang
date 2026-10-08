@@ -145,6 +145,7 @@ static int starts_atom(TokKind kind) {
     case TOK_KW_FUN:
     case TOK_KW_FAMILY:
     case TOK_KW_AXIOM:
+    case TOK_KW_STATE:
       return 0;
   }
   return 0;
@@ -306,6 +307,7 @@ static const Term *parse_atom(Parser *p) {
     case TOK_KW_FUN:
     case TOK_KW_FAMILY:
     case TOK_KW_AXIOM:
+    case TOK_KW_STATE:
       break;
   }
   fail_at(p, tok, "a term");
@@ -347,12 +349,23 @@ static const Term *parse_term(Parser *p) {
   return term;
 }
 
-static int parse_fields(Parser *p, const Field **out, size_t *out_count) {
+/* `history (` marks the fields of the next group in the state form (slice
+   K3a). It is not a keyword: `history` stays a legal name. */
+static int at_history(const Parser *p) {
+  const Token *tok = cur(p);
+  return tok->kind == TOK_IDENT && tok->len == 7u && memcmp(tok->text, "history", 7u) == 0
+      && peek_at(p, 1)->kind == TOK_LPAREN;
+}
+
+/* MARKS is 1 for the constructor fields of the state form. */
+static int parse_fields(Parser *p, int marks, const Field **out, size_t *out_count) {
   Field *items = NULL;
   size_t count = 0;
   size_t cap = 0;
-  while (at_binder_group(p)) {
+  while (at_binder_group(p) || (marks && at_history(p))) {
     Binders b;
+    int history = marks && at_history(p);
+    if (history) bump(p);
     if (!parse_group(p, &b)) return 0;
     for (size_t i = 0; i < b.count; i++) {
       items = grow(p, items, count, &cap, sizeof *items);
@@ -361,6 +374,7 @@ static int parse_fields(Parser *p, const Field **out, size_t *out_count) {
       items[count].type = b.type;
       items[count].line = b.tok->line;
       items[count].col = b.tok->col;
+      items[count].history = history;
       count++;
     }
   }
@@ -400,7 +414,7 @@ static int parse_family(Parser *p, Decl *d) {
   d->name = take_name(p, "a family name");
   if (d->name == NULL) return 0;
   p->def = d->name;
-  if (!parse_fields(p, &d->params, &d->param_count) || !expect(p, TOK_DEFINE, "':='")) return 0;
+  if (!parse_fields(p, 0, &d->params, &d->param_count) || !expect(p, TOK_DEFINE, "':='")) return 0;
   Ctor *ctors = NULL;
   size_t count = 0;
   size_t cap = 0;
@@ -412,7 +426,7 @@ static int parse_family(Parser *p, Decl *d) {
     ctor->line = cur(p)->line;
     ctor->col = cur(p)->col;
     ctor->name = take_name(p, "a constructor name");
-    if (ctor->name == NULL || !parse_fields(p, &ctor->fields, &ctor->field_count)) return 0;
+    if (ctor->name == NULL || !parse_fields(p, d->is_state, &ctor->fields, &ctor->field_count)) return 0;
   } while (eat(p, TOK_BAR));
   d->ctors = ctors;
   d->ctor_count = count;
@@ -425,10 +439,12 @@ static int parse_decl(Parser *p, Decl *d) {
   d->origin = p->origin;
   d->line = tok->line;
   d->col = tok->col;
+  d->is_state = tok->kind == TOK_KW_STATE;
   switch (tok->kind) {
     case TOK_KW_DEF: return parse_def(p, d);
     case TOK_KW_AXIOM: return parse_axiom(p, d);
-    case TOK_KW_FAMILY: return parse_family(p, d);
+    case TOK_KW_FAMILY:
+    case TOK_KW_STATE: return parse_family(p, d);
     case TOK_EOF:
     case TOK_IDENT:
     case TOK_NAT:
@@ -447,7 +463,7 @@ static int parse_decl(Parser *p, Decl *d) {
     case TOK_KW_SIGMA:
       break;
   }
-  return fail_at(p, tok, "'def', 'axiom' or 'family'");
+  return fail_at(p, tok, "'def', 'axiom', 'family' or 'state'");
 }
 
 int parse_source(Arena *arena, const char *source, Origin origin, const TokenList *toks, DeclList *list, Diag *diag) {
