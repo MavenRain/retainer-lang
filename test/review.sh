@@ -69,6 +69,7 @@ def wordView : Env -> State -> U256 -> U256 := fun e s w => w
 def addrView : Env -> State -> Addr -> Addr := fun e s a => a
 EOF
 caller=0x00000000000000000000000000000000000000bb
+hex64=$(printf '%064d' 0)
 cat >"$tmp/args.script" <<EOF
 -- A comment does not increment the call number.
 
@@ -76,17 +77,19 @@ cat >"$tmp/args.script" <<EOF
 2 $caller flagView 1
 3 $caller wordView 0x10u
 4 $caller addrView $caller
+5 $caller wordView 0x${hex64}u
 EOF
 cat >"$tmp/want" <<EOF
 1 natView = 18446744073709551615
 2 flagView = flagYes
 3 wordView = 16u
 4 addrView = $caller
+5 wordView = 0u
 state makeState 0
 EOF
 build/langc run "$tmp/args.lang" "$tmp/args.script" >"$tmp/got"
 cmp "$tmp/want" "$tmp/got"
-for call in 'natView 18446744073709551616' 'flagView 2' 'wordView 5' 'addrView 0xbb'; do
+for call in 'natView 18446744073709551616' 'flagView 2' 'wordView 5' 'addrView 0xbb' "wordView 0x${hex64}0u"; do
   printf '1 %s %s\n' "$caller" "$call" >"$tmp/args.script"
   status=0
   build/langc run "$tmp/args.lang" "$tmp/args.script" >"$tmp/got" 2>"$tmp/err" || status=$?

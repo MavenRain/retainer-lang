@@ -1768,7 +1768,8 @@ static int parse_word(const char *text, uint64_t sort, U256 *out) {
   size_t start = hex ? 2u : 0u;
   size_t end = sort == WORD_U256 && n > 0u ? n - 1u : n;
   size_t i;
-  if (end <= start || (sort == WORD_U256 && text[end] != 'u') || (sort == WORD_ADDR && (!hex || n != 42u)))
+  if (end <= start || (sort == WORD_U256 && (text[end] != 'u' || (hex && end - start > 64u)))
+      || (sort == WORD_ADDR && (!hex || n != 42u)))
     return 0;
   u256_from_u64(out, 0);
   for (i = start; i < end; i++) {

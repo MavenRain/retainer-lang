@@ -12,6 +12,7 @@ mismatch.lang TYPE_MISMATCH
 unknown.lang NAME_UNKNOWN
 universe.lang TYPE_MISMATCH
 universe-range.lang TYPE_UNIVERSE
+universe-ceiling.lang TYPE_UNIVERSE
 no-type.lang TYPE_INFER
 bare-fun.lang TYPE_INFER
 filter-sum.lang TYPE_MISMATCH
