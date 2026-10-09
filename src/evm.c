@@ -12,12 +12,24 @@ enum { EVM_SIGNATURE = 256 };
 
 const char target_name[] = "evm";
 
-/* NAME(uint256,...) with one uint256 for each parameter: Nat and Flag are
-   both one word. Returns the length, or 0 when it does not fit. */
+/* The ABI type name of a scalar (C-K4-6). */
+static const char *abi_type(IrScalar s) {
+  switch (s) {
+  case IR_SCALAR_NAT: return "uint64";
+  case IR_SCALAR_FLAG: return "bool";
+  case IR_SCALAR_U256: return "uint256";
+  case IR_SCALAR_ADDR: return "address";
+  }
+  return "uint256";
+}
+
+/* NAME(TYPE,...) with the ABI type of each parameter: Nat = uint64,
+   Flag = bool, U256 = uint256, Addr = address. Returns the length, or 0
+   when it does not fit. */
 static size_t signature(char *text, const IrFunc *fn) {
   int used = snprintf(text, EVM_SIGNATURE, "%s(", fn->name);
   for (size_t i = 0; used > 0 && used < EVM_SIGNATURE && i < fn->param_count; i++) {
-    used += snprintf(text + used, EVM_SIGNATURE - (size_t)used, "%suint256", i == 0 ? "" : ",");
+    used += snprintf(text + used, EVM_SIGNATURE - (size_t)used, "%s%s", i == 0 ? "" : ",", abi_type(fn->params[i]));
   }
   if (used > 0 && used < EVM_SIGNATURE) used += snprintf(text + used, EVM_SIGNATURE - (size_t)used, ")");
   return used > 0 && used < EVM_SIGNATURE ? (size_t)used : 0;

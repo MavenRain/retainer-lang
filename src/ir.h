@@ -19,9 +19,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The ABI type of a parameter or a result. U256 and ADDR are for the EVM
+   kit only (slice K4b): there a word is 32 bytes. */
 typedef enum {
-  IR_SCALAR_NAT,
-  IR_SCALAR_FLAG
+  IR_SCALAR_NAT,  /* uint64 */
+  IR_SCALAR_FLAG, /* bool */
+  IR_SCALAR_U256, /* uint256 */
+  IR_SCALAR_ADDR  /* address */
 } IrScalar;
 
 typedef enum {
