@@ -160,6 +160,8 @@ static int build_status(Machine *m, EvmBuild result) {
       return diag_fail(m->diag, "EVM_SIZE", NULL, "the contract code is longer than the EIP-3860 or EIP-170 limit") + 1;
     case EVM_BUILD_OOM: return diag_fail(m->diag, "OOM", NULL, "out of memory") + 1;
     case EVM_BUILD_WRITE: return diag_fail(m->diag, "IO_WRITE", NULL, "the code buffer write failed") + 2;
+    case EVM_BUILD_IR:
+      return diag_fail(m->diag, "REFUSE_LOWER", NULL, "an entry has an IR form that the EVM back end does not lower") + 1;
   }
   return 1;
 }
@@ -566,7 +568,6 @@ int lower_build(Machine *m, TargetPart part, FILE *out) {
   }
   IrProgram program = {NULL, 0};
   if (!lower_entries(m, ci, &program)) return 1;
-  (void)program; /* K4b s7: evm_build takes the program (C-K4b-2) */
   m->def = "init";
   m->fuel = EVAL_FUEL_STEPS;
   const Value *state = def_value(m, init);
@@ -579,5 +580,5 @@ int lower_build(Machine *m, TargetPart part, FILE *out) {
   if (pairs.count > 0 && pairs.at == NULL) return diag_fail(m->diag, "OOM", NULL, "out of memory") + 1;
   pairs.count = 0;
   if (!lower_state(m, ci, state, &pairs)) return 1;
-  return build_status(m, evm_build((const unsigned char (*)[64])pairs.at, pairs.count, part, out));
+  return build_status(m, evm_build(&program, (const unsigned char (*)[64])pairs.at, pairs.count, part, out));
 }
