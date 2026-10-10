@@ -1,6 +1,8 @@
 /* Residual lowering regressions exercise checked source and the resulting IR. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 
 #include "front/check.h"
 #include "front/front.h"
@@ -52,7 +54,7 @@ static int regression(const char *name, const char *defs, size_t functions,
   if (ok) {
     if (empty_fuel) machine.fuel = 0;
     const CtorInfo *ci = &machine.ctors[machine.families[machine.state_family].first_ctor];
-    ok = lower_entries(&machine, ci, &program);
+    ok = lower_entries(&machine, ci, &program, NULL);
   }
   ok = ok && diag.code == NULL && program.func_count == functions;
   if (ok && functions > 0) {
@@ -86,11 +88,62 @@ static int regression(const char *name, const char *defs, size_t functions,
   return ok;
 }
 
+static int abi_regression(const char *name, const char *source, const char *code, const char *expected) {
+  Arena arena;
+  Diag diag;
+  DeclList decls;
+  Machine machine;
+  FILE *out = tmpfile();
+  if (out == NULL) return 0;
+  arena_init(&arena, (size_t)1 << 25);
+  diag_init(&diag);
+  int ok = front_load(&arena, name, source, strlen(source), &decls, &diag)
+    && check_program(&arena, &decls, &machine, &diag);
+  if (ok) {
+    int status = lower_abi(&machine, out);
+    if (code != NULL) {
+      ok = status == 1 && diag.code != NULL && strcmp(diag.code, code) == 0 && ftell(out) == 0;
+    } else {
+      char text[1024];
+      rewind(out);
+      size_t count = fread(text, 1, sizeof text - 1, out);
+      text[count] = '\0';
+      ok = status == 0 && !diag.set && !ferror(out) && feof(out) && strcmp(text, expected) == 0;
+    }
+  }
+  if (!ok) {
+    fprintf(stderr, "FAIL abi %s\n", name);
+    if (diag.set) diag_print(&diag, stderr);
+  }
+  fclose(out);
+  arena_release(&arena);
+  return ok;
+}
+
 #define ENTRY "def entry : Env -> State -> Option (Prod State (List Out)) := fun env s => "
 #define TOKEN "0x00000000000000000000000000000000000000aa"
 
 int main(void) {
   int ok = 1;
+  ok &= abi_regression("init-trap",
+    "state State := makeState (n : U256)\n"
+    "def init : State := makeState (u256Div 1u 0u)\n"
+    "def value : Env -> State -> U256 := fun env s => n s\n", "REFUSE_LOWER", NULL);
+  ok &= abi_regression("selector-collision",
+    "state State := makeState (n : Nat)\n"
+    "def init : State := makeState 0\n"
+    "def collision39027 : Env -> State -> Nat := fun env s => n s\n"
+    "def collision109357 : Env -> State -> Option (Prod State (List Out)) := "
+    "fun env s => some (pair s nil)\n", "EVM_SELECTOR", NULL);
+  ok &= abi_regression("no-functions",
+    "event Opened\nstate State := makeState (n : Nat)\n"
+    "def init : State := makeState 0\n", NULL,
+    "0xd1dcd00534373f20882b79e6ab6875a5c358c5bd576448757ed50e63069ab518 Opened() event\n");
+  int output_status = system("build/langc abi examples/contract.lang 1</dev/null 2>/dev/null");
+  if (output_status == -1 || !WIFEXITED(output_status) || WEXITSTATUS(output_status) != 2) {
+    fprintf(stderr, "FAIL abi buffered-write (status %d)\n", output_status);
+    ok = 0;
+  }
   ok &= regression("helper-pair",
     "def helper : Env -> State -> Option (Prod Nat Nat) := fun env s => some (pair 1 2)\n",
     0, 0, 0, 0, 0, 0);

@@ -29,8 +29,16 @@ typedef enum {
    zero (PUSH value, PUSH slot, SSTORE), then returns the runtime code. The
    runtime code is the dispatcher head, the shared REVERT and Trap() blocks
    and one block per entry or view. TARGET_PART_RUNTIME writes only
-   that runtime, without assembling or applying size limits to creation code. */
+   that runtime, without assembling or applying size limits to creation code.
+   When OUT is NULL, performs the same validation without writing the hex line. */
 EvmBuild evm_build(const IrProgram *prog, const unsigned char (*pairs)[64], size_t count, TargetPart part,
                    FILE *out);
+
+/* Writes one `langc abi` line on OUT (C-K4-16): `0xSELECTOR NAME(TYPES)
+   KIND`. KIND is "entry", "view" or "event". The selector is the first 4
+   bytes of the keccak256 of the signature, or all 32 bytes (topic 0) for an
+   event. EVM_BUILD_SIGNATURE: the signature of an entry or view is longer
+   than 255 bytes. */
+EvmBuild evm_abi_line(const char *kind, const char *name, const IrScalar *types, size_t count, FILE *out);
 
 #endif

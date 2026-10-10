@@ -55,6 +55,26 @@ static EvmBuild event_topic(const IrStmt *s, unsigned char topic[32]) {
   return size > 0 ? EVM_BUILD_OK : EVM_BUILD_IR;
 }
 
+EvmBuild evm_abi_line(const char *kind, const char *name, const IrScalar *types, size_t count, FILE *out) {
+  int event = strcmp(kind, "event") == 0;
+  size_t name_size = strlen(name);
+  if (name_size > SIZE_MAX - 3u || count > (SIZE_MAX - name_size - 3u) / 8u) return EVM_BUILD_SIZE;
+  size_t capacity = name_size + 3u + 8u * count;
+  char *text = malloc(capacity);
+  if (text == NULL) return EVM_BUILD_OOM;
+  size_t size = signature_of(text, capacity, name, types, count);
+  int fits = size > 0 && (event || size < EVM_SIGNATURE);
+  unsigned char digest[32];
+  if (fits) {
+    keccak256((const unsigned char *)text, size, digest);
+    fputs("0x", out);
+    for (size_t i = 0; i < (event ? 32u : 4u); i++) fprintf(out, "%02x", digest[i]);
+    fprintf(out, " %s %s\n", text, kind);
+  }
+  free(text);
+  return size == 0 ? EVM_BUILD_IR : !fits ? EVM_BUILD_SIGNATURE : ferror(out) ? EVM_BUILD_WRITE : EVM_BUILD_OK;
+}
+
 int target_abi_line(const IrFunc *fn, FILE *out, FILE *err) {
   char text[EVM_SIGNATURE];
   size_t size = signature(text, fn);
@@ -389,8 +409,8 @@ EvmBuild evm_build(const IrProgram *prog, const unsigned char (*pairs)[64], size
   EvmBuild result = stores->full || !asm_finish(runtime, sink) || runtime->size > ASM_RUNTIME_MAX
                         || (part != TARGET_PART_RUNTIME && !asm_creation_store(code, stores, runtime, sink))
                         ? EVM_BUILD_SIZE
-                    : asm_write_hex(part == TARGET_PART_RUNTIME ? runtime : code, out, sink) ? EVM_BUILD_OK
-                                                                                            : EVM_BUILD_WRITE;
+                    : out == NULL || asm_write_hex(part == TARGET_PART_RUNTIME ? runtime : code, out, sink)
+                        ? EVM_BUILD_OK : EVM_BUILD_WRITE;
   fclose(sink);
   free(a);
   return result;
